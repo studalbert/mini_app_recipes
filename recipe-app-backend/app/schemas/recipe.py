@@ -2,6 +2,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+class RecipeImageOut(BaseModel):
+    id: int
+    url: str
+    position: int
+
 
 class IngredientOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -44,10 +49,11 @@ class RecipeOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     ingredients: list[IngredientOut]
+    images: list[RecipeImageOut] = []
 
 
 class RecipeListItem(BaseModel):
-    """Облегчённая версия для списков (лента, "мои рецепты") — без текста готовки и ингредиентов."""
+    """Облегчённая версия для списков — без текста готовки и ингредиентов."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,3 +62,4 @@ class RecipeListItem(BaseModel):
     title: str
     is_public: bool
     created_at: datetime
+    cover_url: str | None = None
