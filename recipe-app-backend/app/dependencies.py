@@ -1,4 +1,5 @@
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import APIKeyHeader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,9 +7,17 @@ from app.database import get_db
 from app.models import User
 from app.security import validate_init_data
 
+# APIKeyHeader вместо обычного Header(...) — регистрируется в OpenAPI как security-схема,
+# поэтому в Swagger UI появляется кнопка "Authorize" наверху страницы: вводишь значение
+# один раз, и оно подставляется во все запросы автоматически, а не только в один эндпоинт.
+authorization_scheme = APIKeyHeader(
+    name="Authorization",
+    description="Формат: 'tma <initData>' — вставь сюда целиком, включая слово 'tma' и пробел",
+)
+
 
 async def get_current_user(
-    authorization: str = Header(..., description="Формат: 'tma <initData>'"),
+    authorization: str = Depends(authorization_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
