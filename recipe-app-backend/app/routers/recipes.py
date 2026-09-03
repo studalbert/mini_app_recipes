@@ -1,3 +1,6 @@
+from typing import Literal
+
+from sqlalchemy import func, select
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -41,7 +44,16 @@ def _recipe_out(recipe: Recipe, is_saved: bool = False) -> RecipeOut:
     )
 
 
-def _list_item(recipe: Recipe, is_saved: bool = False) -> RecipeListItem:
+def _like_pattern(q: str) -> str:
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _list_item(
+    recipe: Recipe,
+    is_saved: bool = False,
+    saves_count: int = 0,
+) -> RecipeListItem:
     cover = recipe.images[0] if recipe.images else None
     return RecipeListItem(
         id=recipe.id,
@@ -51,6 +63,7 @@ def _list_item(recipe: Recipe, is_saved: bool = False) -> RecipeListItem:
         created_at=recipe.created_at,
         cover_url=public_url(cover.file_path) if cover else None,
         is_saved=is_saved,
+        saves_count=int(saves_count or 0),
     )
 
 
@@ -99,63 +112,38 @@ async def create_recipe(
 
 @router.get("", response_model=list[RecipeListItem])
 async def list_public_recipes(
+    q: str | None = Query(default=None, max_length=100, description="Поиск по названию"),
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
-    search: str | None = Query(default=None, description="Поиск по названию рецепта"),
-    sort: Literal["new", "popular"] | None = Query(
-        default=None,
-        description=(
-            "'new' — сначала новые, 'popular' — сначала те, кого чаще всего "
-            "сохраняли себе. По умолчанию: popular при поиске (search задан), иначе new."
-        ),
-    ),
     current_user: User | None = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Общая лента / поиск публичных рецептов.
-    При поиске по умолчанию сначала показываются самые популярные (часто сохраняемые)
-    рецепты — так пользователь быстрее находит проверенные другими варианты.
-    """
-    effective_sort = sort or ("popular" if search else "new")
- 
-    # saves_count — сколько раз рецепт сохранили себе другие пользователи.
-    # Считаем через subquery + outerjoin, чтобы рецепты без единого сохранения
-    # тоже попадали в выдачу (с saves_count = 0), а не терялись при обычном join.
-    saves_subq = (
-        select(SavedRecipe.recipe_id, func.count().label("saves_count"))
-        .group_by(SavedRecipe.recipe_id)
-        .subquery()
-    )
-    saves_count_col = func.coalesce(saves_subq.c.saves_count, 0).label("saves_count")
- 
-    query = (
-        select(Recipe, saves_count_col)
-        .options(selectinload(Recipe.images))
-        .outerjoin(saves_subq, saves_subq.c.recipe_id == Recipe.id)
-        .where(Recipe.is_public.is_(True))
-    )
- 
-    if search:
-        query = query.where(Recipe.title.ilike(f"%{search}%"))
- 
-    if effective_sort == "popular":
-        query = query.order_by(saves_count_col.desc(), Recipe.created_at.desc())
+    query_text = q.strip() if q else ""
+
+    stmt = select(Recipe).options(selectinload(Recipe.images)).where(Recipe.is_public.is_(True))
+
+    if query_text:
+        saves_count = (
+            select(SavedRecipe.recipe_id, func.count(SavedRecipe.id).label("cnt"))
+            .group_by(SavedRecipe.recipe_id)
+            .subquery()
+        )
+        stmt = (
+            stmt.outerjoin(saves_count, saves_count.c.recipe_id == Recipe.id)
+            .where(Recipe.title.ilike(_like_pattern(query_text), escape="\\"))
+            .order_by(func.coalesce(saves_count.c.cnt, 0).desc(), Recipe.created_at.desc())
+        )
     else:
-        query = query.order_by(Recipe.created_at.desc())
- 
-    query = query.limit(limit).offset(offset)
- 
-    result = await db.execute(query)
-    rows = result.all()  # список пар (Recipe, saves_count)
- 
-    recipes = [recipe for recipe, _ in rows]
-    saved = await _saved_ids(db, current_user.id if current_user else None, [r.id for r in recipes])
- 
-    return [
-        _list_item(recipe, is_saved=recipe.id in saved, saves_count=count)
-        for recipe, count in rows
-    ]
+        stmt = stmt.order_by(Recipe.created_at.desc())
+
+    result = await db.execute(stmt.limit(limit).offset(offset))
+    recipes = result.scalars().all()
+    saved = await _saved_ids(
+        db,
+        current_user.id if current_user else None,
+        [r.id for r in recipes],
+    )
+    return [_list_item(r, is_saved=r.id in saved) for r in recipes]
 
 @router.get("/my", response_model=list[RecipeListItem])
 async def list_my_recipes(
