@@ -15,6 +15,23 @@ authorization_scheme = APIKeyHeader(
     description="Формат: 'tma <initData>' — вставь сюда целиком, включая слово 'tma' и пробел",
 )
 
+optional_authorization_scheme = APIKeyHeader(
+    name="Authorization",
+    auto_error=False,
+    description="Необязательный заголовок 'tma <initData>'. Без него is_saved всегда false.",
+)
+
+
+async def get_current_user_optional(
+    authorization: str | None = Depends(optional_authorization_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    if not authorization:
+        return None
+    try:
+        return await get_current_user(authorization=authorization, db=db)
+    except HTTPException:
+        return None
 
 async def get_current_user(
     authorization: str = Depends(authorization_scheme),

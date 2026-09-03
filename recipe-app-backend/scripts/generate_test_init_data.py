@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import settings  # noqa: E402
 
 
-def build_test_init_data(telegram_id: int = 123456789, username: str = "test_user",
-                          first_name: str = "Тест") -> str:
+def build_test_init_data(telegram_id: int = 223456789, username: str = "test_user2",
+                          first_name: str = "Тест2") -> str:
     user_payload = json.dumps(
         {"id": telegram_id, "first_name": first_name, "username": username, "language_code": "ru"},
         ensure_ascii=False,

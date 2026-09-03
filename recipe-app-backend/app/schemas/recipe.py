@@ -50,6 +50,7 @@ class RecipeOut(BaseModel):
     updated_at: datetime
     ingredients: list[IngredientOut]
     images: list[RecipeImageOut] = []
+    is_saved: bool = False
 
 
 class RecipeListItem(BaseModel):
@@ -63,3 +64,4 @@ class RecipeListItem(BaseModel):
     is_public: bool
     created_at: datetime
     cover_url: str | None = None
+    is_saved: bool = False
