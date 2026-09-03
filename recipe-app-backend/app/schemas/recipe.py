@@ -52,12 +52,11 @@ class RecipeOut(BaseModel):
     images: list[RecipeImageOut] = []
     is_saved: bool = False
 
-
 class RecipeListItem(BaseModel):
     """Облегчённая версия для списков — без текста готовки и ингредиентов."""
-
+ 
     model_config = ConfigDict(from_attributes=True)
-
+ 
     id: int
     author_id: int
     title: str
@@ -65,3 +64,4 @@ class RecipeListItem(BaseModel):
     created_at: datetime
     cover_url: str | None = None
     is_saved: bool = False
+    saves_count: int = Field(default=0, description="Сколько раз рецепт сохранили себе другие пользователи")
