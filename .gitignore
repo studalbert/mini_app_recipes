@@ -187,3 +187,10 @@ recipe-app-backend/env
 # Загруженные фото рецептов
 uploads/
 recipe-app-backend/uploads/
+
+# Frontend
+node_modules/
+recipe-app-frontend/dist/
+recipe-app-frontend/.vite/
+*.local
+npm-debug.log*
