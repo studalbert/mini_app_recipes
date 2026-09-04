@@ -1,112 +1,151 @@
-# Recipe Mini App — Backend (шаг 3 из плана)
+# Recipe Mini App — API
 
-## Что уже сделано
-- Структура проекта FastAPI
-- SQLAlchemy 2.0 (async) модели: `User`, `Recipe`, `RecipeImage`, `Ingredient`, `SavedRecipe`
-- Настроен Alembic для миграций (async-совместимый `env.py`)
-- Базовый `main.py` с `/health`
-- **Авторизация через Telegram `initData`** (`app/security.py`, `app/dependencies.py`)
-- Эндпоинт `GET /auth/me` — проверка подписи + автосоздание пользователя
-- Скрипт `scripts/generate_test_init_data.py` для локального тестирования без Telegram
+Backend for a **Telegram Mini App** where users publish recipes, browse a public feed, and save other people’s dishes. Auth is Telegram `initData` (HMAC), not a custom JWT.
 
-## Как проверить авторизацию локально
+This service is the API for [`recipe-app-frontend`](../recipe-app-frontend).
 
-1. В `.env` укажи `TELEGRAM_BOT_TOKEN` — реальный токен твоего бота
-   (получить у [@BotFather](https://t.me/BotFather), команда `/newbot` или `/mybots` → `API Token`).
+## Features
 
-2. Запусти сервер:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
+- Telegram WebApp auth: HMAC-SHA256 validation of `initData`, 24h replay window, auto-provision of users
+- Recipe CRUD with ingredients, cooking steps, and public / private visibility
+- Public feed with title search (results ranked by save count)
+- Save / unsave others’ recipes; “my recipes” and “saved” lists
+- Image upload (JPEG / PNG / WebP), type check by file signature, size and count limits
+- User profile with recipe and saved counts
+- Async PostgreSQL via SQLAlchemy 2.0 + Alembic migrations
+- OpenAPI / Swagger at `/docs`
 
-3. Сгенерируй тестовую initData:
-   ```bash
-   python3 scripts/generate_test_init_data.py
-   ```
+## Tech stack
 
-4. Скопируй curl-команду из вывода скрипта и выполни её. Если всё настроено
-   верно — увидишь JSON с данными пользователя (и он появится в таблице `users`).
+| Layer | Choice |
+| --- | --- |
+| API | FastAPI, Pydantic v2 |
+| ORM | SQLAlchemy 2.0 (async), asyncpg |
+| DB | PostgreSQL, Alembic |
+| Auth | Telegram Mini App `initData` |
+| Files | Local disk, served at `/uploads` |
+| Config | pydantic-settings, `.env` |
 
-5. Попробуй с неверным/битым hash — должен вернуться `401 Unauthorized`.
+## Auth
 
-## Как это будет работать в реальном Mini App
+Protected routes expect:
 
-На фронтенде (шаг 8) вместо скрипта используется настоящая `initData`:
-```js
-const initData = window.Telegram.WebApp.initData;
-fetch('/auth/me', {
-  headers: { Authorization: `tma ${initData}` }
-});
+```http
+Authorization: tma <initData>
 ```
-Каждый защищённый запрос к API должен нести этот заголовок — отдельного JWT
-или сессии не заводим, initData от Telegram сама по себе служит подтверждением.
 
-## Как запустить локально
+`initData` is signed by Telegram. The server rebuilds `data_check_string`, computes HMAC with the bot token, and rejects a missing/invalid hash or stale payload. There is no session cookie and no JWT: each request carries `initData`.
 
-1. Установи PostgreSQL локально (или подними в Docker):
-   ```bash
-   docker run --name recipe-db -e POSTGRES_USER=recipe_user \
-     -e POSTGRES_PASSWORD=recipe_pass -e POSTGRES_DB=recipe_db \
-     -p 5432:5432 -d postgres:16
-   ```
+Locally, generate a valid string with `scripts/generate_test_init_data.py` (needs a real `TELEGRAM_BOT_TOKEN` from [@BotFather](https://t.me/BotFather)).
 
-2. Скопируй `.env.example` в `.env` и подставь свои значения:
-   ```bash
-   cp .env.example .env
-   ```
+## API surface
 
-3. Создай виртуальное окружение и поставь зависимости:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness |
+| `GET` | `/auth/me` | Current user (creates row on first visit) |
+| `GET` | `/profile` | Profile + counts |
+| `GET` | `/recipes` | Public feed (`q`, `limit`, `offset`) |
+| `POST` | `/recipes` | Create recipe |
+| `GET` | `/recipes/my` | Own recipes |
+| `GET` | `/recipes/saved` | Saved recipes |
+| `GET` | `/recipes/{id}` | Recipe detail |
+| `PUT` | `/recipes/{id}` | Update (author only) |
+| `DELETE` | `/recipes/{id}` | Delete (author only) |
+| `POST` | `/recipes/{id}/save` | Save |
+| `DELETE` | `/recipes/{id}/save` | Unsave |
+| `POST` | `/recipes/{id}/images` | Upload photos |
+| `DELETE` | `/recipes/{id}/images/{image_id}` | Delete photo |
 
-4. Сгенерируй и примени первую миграцию:
-   ```bash
-   alembic revision --autogenerate -m "init tables"
-   alembic upgrade head
-   ```
+Interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-5. Запусти сервер:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-6. Открой http://localhost:8000/docs — увидишь Swagger UI со списком эндпоинтов
-   (пока там только `/health`).
-
-## Структура проекта
+## Project layout
 
 ```
 recipe-app-backend/
 ├── app/
-│   ├── main.py          # точка входа FastAPI
-│   ├── config.py        # настройки из .env
-│   ├── database.py      # подключение к БД, Base, get_db()
-│   ├── security.py      # проверка подписи Telegram initData
-│   ├── dependencies.py  # get_current_user — auth-зависимость для роутов
-│   ├── models/          # SQLAlchemy модели
-│   │   ├── user.py
-│   │   ├── recipe.py
-│   │   ├── recipe_image.py
-│   │   ├── ingredient.py
-│   │   └── saved_recipe.py
-│   ├── schemas/         # Pydantic-схемы для API
-│   │   └── user.py
-│   └── routers/         # эндпоинты, сгруппированные по темам
-│       └── auth.py
+│   ├── main.py           # FastAPI app, CORS, static uploads
+│   ├── config.py         # env settings
+│   ├── database.py       # async engine / session
+│   ├── security.py       # Telegram initData HMAC
+│   ├── dependencies.py   # get_current_user
+│   ├── storage.py        # image validation and disk I/O
+│   ├── models/           # SQLAlchemy models
+│   ├── schemas/          # Pydantic DTOs
+│   └── routers/          # auth, profile, recipes
+├── alembic/              # migrations
 ├── scripts/
-│   └── generate_test_init_data.py  # генератор тестовой initData
-├── alembic/             # миграции БД
+│   └── generate_test_init_data.py
 ├── requirements.txt
 └── .env.example
 ```
 
-## Что дальше (следующие шаги)
-4. CRUD рецептов (создание/редактирование/удаление, приватность)
-5. Загрузка и хранение фотографий
-6. Избранное ("добавленные к себе рецепты")
-7. Эндпоинты профиля пользователя
-8. Фронтенд на React + Telegram WebApp SDK
-9. Деплой
+## Data model
+
+- **User** — Telegram id, username, name, photo
+- **Recipe** — title, cooking text, `is_public`, author
+- **Ingredient** — ordered lines per recipe
+- **RecipeImage** — relative file path + position
+- **SavedRecipe** — unique (user, recipe)
+
+Private recipes stay out of the feed; they remain reachable by id.
+
+## Run locally
+
+**1. PostgreSQL** (Docker example; compose at the repo root uses different credentials — match `.env`):
+
+```bash
+docker run --name recipe-db \
+  -e POSTGRES_USER=recipe_user \
+  -e POSTGRES_PASSWORD=recipe_pass \
+  -e POSTGRES_DB=recipe_db \
+  -p 5432:5432 -d postgres:16
+```
+
+**2. Environment**
+
+```bash
+cp .env.example .env
+```
+
+Set `TELEGRAM_BOT_TOKEN` and `DATABASE_URL`.
+
+**3. Dependencies**
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**4. Migrations**
+
+```bash
+alembic upgrade head
+```
+
+**5. Server**
+
+```bash
+uvicorn app.main:app --reload
+```
+
+API: [http://localhost:8000](http://localhost:8000)
+
+### Check auth without Telegram
+
+```bash
+python3 scripts/generate_test_init_data.py
+```
+
+Run the printed `curl` against `/auth/me`. A tampered hash should return `401`.
+
+## Environment variables
+
+| Variable | Role |
+| --- | --- |
+| `DATABASE_URL` | SQLAlchemy URL (`postgresql+asyncpg://…`) |
+| `TELEGRAM_BOT_TOKEN` | Bot token for HMAC |
+| `APP_SECRET_KEY` | App secret |
+| `ENVIRONMENT` | e.g. `development` |
+| `UPLOAD_DIR` | Photo directory (default `./uploads`) |
