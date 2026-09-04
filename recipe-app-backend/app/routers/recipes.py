@@ -1,8 +1,5 @@
-from typing import Literal
-
 from sqlalchemy import func, select
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -120,23 +117,44 @@ async def list_public_recipes(
 ):
     query_text = q.strip() if q else ""
 
-    stmt = select(Recipe).options(selectinload(Recipe.images)).where(Recipe.is_public.is_(True))
-
     if query_text:
-        saves_count = (
+        saves_subq = (
             select(SavedRecipe.recipe_id, func.count(SavedRecipe.id).label("cnt"))
             .group_by(SavedRecipe.recipe_id)
             .subquery()
         )
         stmt = (
-            stmt.outerjoin(saves_count, saves_count.c.recipe_id == Recipe.id)
+            select(Recipe, func.coalesce(saves_subq.c.cnt, 0).label("saves_count"))
+            .options(selectinload(Recipe.images))
+            .outerjoin(saves_subq, saves_subq.c.recipe_id == Recipe.id)
+            .where(Recipe.is_public.is_(True))
             .where(Recipe.title.ilike(_like_pattern(query_text), escape="\\"))
-            .order_by(func.coalesce(saves_count.c.cnt, 0).desc(), Recipe.created_at.desc())
+            .order_by(func.coalesce(saves_subq.c.cnt, 0).desc(), Recipe.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
-    else:
-        stmt = stmt.order_by(Recipe.created_at.desc())
+        result = await db.execute(stmt)
+        rows = result.all()
+        recipes = [recipe for recipe, _ in rows]
+        saved = await _saved_ids(
+            db,
+            current_user.id if current_user else None,
+            [r.id for r in recipes],
+        )
+        return [
+            _list_item(recipe, is_saved=recipe.id in saved, saves_count=cnt)
+            for recipe, cnt in rows
+        ]
 
-    result = await db.execute(stmt.limit(limit).offset(offset))
+    stmt = (
+        select(Recipe)
+        .options(selectinload(Recipe.images))
+        .where(Recipe.is_public.is_(True))
+        .order_by(Recipe.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await db.execute(stmt)
     recipes = result.scalars().all()
     saved = await _saved_ids(
         db,
@@ -144,6 +162,7 @@ async def list_public_recipes(
         [r.id for r in recipes],
     )
     return [_list_item(r, is_saved=r.id in saved) for r in recipes]
+
 
 @router.get("/my", response_model=list[RecipeListItem])
 async def list_my_recipes(
