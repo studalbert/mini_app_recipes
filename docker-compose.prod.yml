@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./recipe-app-backend
+    restart: unless-stopped
+    env_file:
+      - ./recipe-app-backend/.env
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx:/etc/nginx/conf.d:ro
+      - ./recipe-app-frontend/dist:/var/www/frontend:ro
+      - uploads:/var/www/uploads:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - backend
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Раз в 12 часов пробует продлить сертификат (certbot сам понимает,
+    # что рано, и ничего не делает, пока не останется ~30 дней до истечения)
+    entrypoint: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h; done"
+
+volumes:
+  pgdata:
+    name: recipe_app_pgdata
+  uploads:
+    name: recipe_app_uploads
+  certbot_certs:
+    name: recipe_app_certbot_certs
+  certbot_www:
+    name: recipe_app_certbot_www
